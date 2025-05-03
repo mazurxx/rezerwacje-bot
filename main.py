@@ -95,5 +95,47 @@ def hook():
     else:
         return jsonify({"message": "Brak dostępnych terminów w najbliższym czasie."}), 404
 
+@app.route("/rezerwuj", methods=["POST"])
+def rezerwuj():
+    data = request.get_json()
+    service = data.get("usluga")
+    start_data = data.get("data")
+    start_godzina = data.get("godzina")
+    klient = data.get("klient")
+
+    if not all([service, start_data, start_godzina, klient]):
+        return jsonify({"message": "Brakuje danych wejściowych."}), 400
+
+    duration = get_service_duration(service)
+    if not duration:
+        return jsonify({"message": f"Nie znam takiej usługi: {service}"}), 400
+
+    slot_length = 30
+    required_slots = duration // slot_length
+
+    sheet = gc.open_by_key(SPREADSHEET_ID).sheet1
+    rows = sheet.get_all_records()
+    start_index = None
+
+    for i, row in enumerate(rows):
+        if row["data"] == start_data and row["godzina"] == start_godzina and row["status"].lower() == "wolny":
+            start_index = i
+            break
+
+    if start_index is None:
+        return jsonify({"message": "Nie znaleziono dostępnego startowego slotu."}), 400
+
+    for j in range(required_slots):
+        row = rows[start_index + j]
+        if row["data"] != start_data or row["status"].lower() != "wolny":
+            return jsonify({"message": "Sloty nie są już dostępne."}), 400
+
+    for j in range(required_slots):
+        row_number = start_index + j + 2
+        sheet.update_cell(row_number, 3, "zajęty")  # kolumna status
+        sheet.update_cell(row_number, 4, klient)    # kolumna klient
+
+    return jsonify({"message": f"Zarezerwowano termin na '{service}' {start_data} o {start_godzina} dla {klient}."})
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=3000)
